@@ -1,0 +1,279 @@
+---
+title: "FIFA World Cup Match Attendance Analysis (1930-2014)"
+author: "Yousaf Jan"
+output: html_document
+---
+
+### Exploring the trends in Soccer
+
+## Why This Dataset?
+I analyzed FIFA World Cup match data from 1930 to 2014, covering match dates, teams, goals, attendance, and key event details. As a fan of soccer for my whole life, I wanted to explore how the World Cup has evolved, especially in match attendance and global interest.
+
+The data was sourced from Kaggle: [https://www.kaggle.com/datasets/abecklas/fifa-world-cup](https://www.kaggle.com/datasets/abecklas/fifa-world-cup)
+
+This analysis addresses:
+
+1. How has attendance changed over time?
+
+2. Which countries reached the final most often?
+
+3. Which matchups drew the largest crowds?
+
+4. Which teams scored the most goals in the 1958 World Cup, and how did they perform across stages?
+
+5. How does the home team impact attendance?
+
+6. How do goal distributions vary by decade?
+
+---
+
+## Data Collection
+
+
+```{r, message=FALSE, warning=FALSE}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(tidyr)
+library(treemap)
+library(scales)
+
+# Read the FIFA World Cup dataset
+fifa_data <- read.csv("attendance.csv")
+
+```
+
+## Data Cleaning
+
+```{r, r, message=FALSE, warning=FALSE}
+# Clean column names by removing periods
+colnames(fifa_data) <- gsub("\\.", " ", colnames(fifa_data))
+
+fifa_data_cleaned <- fifa_data |>
+  select(Year, Datetime, Stage, Stadium, City, `Home Team Name`, `Away Team Name`, Attendance, `Home Team Goals`, `Away Team Goals`) |>
+  mutate(Datetime = as.Date(Datetime, format = "%Y-%m-%d")) |> #convert Datetime to Date format
+  filter(!is.na(Attendance)) #remove rows with missing Attendance
+
+
+```
+
+---
+
+## Analyses: Factors Affecting Attendance
+
+### 1. **Attendance Trends Over Time**
+
+**How has attendance changed over time ?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Calculate average attendance by year (average attendance per year)
+attendance_by_year <- summarise(group_by(fifa_data_cleaned, Year), 
+                                avg_attendance = mean(Attendance, na.rm = TRUE))
+
+# Plot the trend
+ggplot(attendance_by_year, aes(x = Year, y = avg_attendance)) +
+  geom_line(color = "blue") +
+  geom_point() +
+  scale_x_continuous(breaks = seq(1930, 2010, by = 10), limits = c(1930, 2014)) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_color_manual(values = c("blue")) +
+  scale_shape_manual(values = c(16)) +
+  theme_minimal() +
+  labs(title = "FIFA World Cup Average Attendance Trends (1930-2014)", x = "Year", y = "Average Attendance")
+
+```
+
+The line graph shows World Cup attendance growing over time as football became more popular, stadiums improved, and more countries joined. Attendance rose sharply from the 1980s, with big spikes in the 1990s and 2000s.
+
+---
+
+### 2. **Proportion of Countries that made it to the final (Pie Chart)**
+
+**Which countries reached the final most often ?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Count the number of times each country appeared in the final and calculate percentages
+final_counts <- fifa_data_cleaned |>
+  filter(Stage == "Final") |>
+  count(`Home Team Name`) |>
+  mutate(Percentage = n / sum(n), 
+         legend_label = paste0(`Home Team Name`, " (", round(Percentage * 100, 1), "%)"))
+
+# Create the pie chart
+ggplot(final_counts, aes(x = "", y = n, fill = legend_label)) +
+  geom_bar(stat = "identity", width = 1, alpha = 0.7) + 
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Set3") + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) + 
+  scale_x_discrete(expand = expansion(add = 0.2)) + 
+  scale_alpha_manual(values = rep(0.8, nrow(final_counts))) +
+  theme_void() +
+  labs(title = "Number of Appearances in the FIFA World Cup Final", fill = "Country")
+
+```
+
+The pie chart clearly reveals that Brazil has the most appearances in the FIFA World Cup final, followed by Italy in second place, and Germany in third. Brazil, Italy, and Germany have often been top teams in the World Cup, showing their strong football skills over the years. Their regular appearances in the final show they are some of the best teams in the world.
+
+---
+
+### 3. **Top 10 Matchups by Average Attendance (Bar Chart)**
+
+**Which matchups drew the largest crowds ?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+# Create a new column for the matchup between home and away teams
+top_10_matchups <- fifa_data_cleaned |>
+  mutate(matchup = paste(`Home Team Name`, "vs.", `Away Team Name`)) |>
+  group_by(matchup) |>
+  # Calculate the average attendance for each unique matchup, ignoring missing values (NA)
+  summarise(Attendance = mean(Attendance, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(Attendance)) |> # Sort the matchups by attendance in descending order
+  head(10)
+
+# Create a plot with each bar in a different color
+ggplot(top_10_matchups, aes(x = reorder(matchup, Attendance), y = Attendance, fill = factor(matchup))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Top 10 Matchups by Average Attendance in FIFA World Cup", 
+       x = "Matchup", 
+       y = "Average Attendance",
+       fill = "Matches") +
+  theme_minimal() +
+  coord_flip() +
+  scale_fill_manual(values = rainbow(nrow(top_10_matchups)))
+```
+
+From this bar graph we can see that the match between Brazil and Uruguay was a very highly anticipated one and a lot of people chose to attend it in person. This tells us that some match ups between highly skilled teams can draw a large amount of crowds
+
+--- 
+
+### 4. **Goals Scored by Each Team in the 1958 World Cup (Tree Map)**
+
+**Which teams scored the most goals in the 1958 World Cup, and how did they perform across stages ?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Filter and summarize goals for home teams
+home_teams <- fifa_data_cleaned |>
+  filter(Year == 1958) |>
+  group_by(Stage, `Home Team Name`) |>
+  summarise(Home_Team_Goals = sum(`Home Team Goals`, na.rm = TRUE), .groups = "drop")
+
+# Filter and summarize goals for away teams
+away_teams <- fifa_data_cleaned |>
+  filter(Year == 1958) |>
+  group_by(Stage, `Away Team Name`) |>
+  summarise(Away_Team_Goals = sum(`Away Team Goals`, na.rm = TRUE), .groups = "drop")
+
+# Combine both datasets and process further
+goal_summary <- bind_rows(home_teams, away_teams) |>
+  mutate(Team = coalesce(`Home Team Name`, `Away Team Name`),
+         Goals = coalesce(Home_Team_Goals, 0) + coalesce(Away_Team_Goals, 0)) |>
+  select(Stage, Team, Goals)
+
+# Plot the treemap
+treemap(goal_summary,
+        index = c("Stage", "Team"),
+        vSize = "Goals",
+        vColor = "Goals",
+        draw = TRUE,
+        palette = "Set3",
+        fontsize.labels = c(10, 8),  # Reduce font size
+        title = "Goals Scored by Each Team in the 1958 World Cup (by Stage)")
+
+```
+
+From the graph above we can see that Brazil has the largest area, indicating they scored the most goals overall, while teams like Sweden and Germany FR also scored many goals, especially in the later stages of the tournament.
+
+--- 
+
+### 5. **Attendance by Host Country (Choropleth Map using `sf`)**
+
+**How does the home team impact attendance ?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Load world map from rnaturalearth in sf format
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+host_countries <- c("Uruguay", "Italy", "France", "Brazil", "Switzerland", "Sweden", "Chile",
+                    "England", "Mexico", "West Germany", "Argentina", "Spain", "United States",
+                    "Japan", "South Korea", "Germany", "South Africa")
+
+# Calculate FIFA attendance data by Home Team Name
+attendance_by_country <- fifa_data_cleaned |>
+  filter(`Home Team Name` %in% host_countries) |>
+  group_by(`Home Team Name`) |>
+  summarise(avg_attendance = mean(Attendance, na.rm = TRUE),
+            total_matches = n())
+
+# Merge the FIFA data with world map
+world_attendance <- world |>
+  left_join(attendance_by_country, by = c("name" = "Home Team Name"))
+
+# Plot the map
+ggplot(world_attendance) +
+  geom_sf(aes(fill = avg_attendance), color = "black") +
+  scale_fill_viridis_c(na.value = "grey50") +
+  theme_minimal() +
+  labs(title = "Average Attendance by Host Country", fill = "Avg Attendance")
+
+```
+
+The map shows average FIFA World Cup attendance by host country. South American nations, especially Brazil and Argentina, have the highest turnout, while Europe shows moderate levels. 
+
+--- 
+
+### 6. **Goal Distribution by Decade (Boxplot)**
+
+**How do goal distributions vary by decade ?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+fifa_data_cleaned |> 
+  mutate(Decade = floor(Year / 10) * 10, # Create a new column called Decade and assign each match to it
+         Goals = `Home Team Goals` + `Away Team Goals`) |>  # Create a Goals column by adding the Home Team Goals and Away Team Goals for each match
+  select(Decade, Goals) |> 
+  filter(!is.na(Goals)) -> goal_distribution
+
+# Create the boxplot
+ggplot(goal_distribution, aes(x = factor(Decade), y = Goals)) +
+  geom_boxplot(fill = "lightblue", color = "black", outlier.colour = "red", outlier.size = 2) +
+  scale_x_discrete(labels = c("1930s", "1940s", "1950s", "1960s", "1970s", "1980s", "1990s", "2000s", "2010s")) +
+  scale_y_continuous(labels = label_number(scale = 1, suffix = " goals")) +
+  scale_fill_manual(values = c("lightblue")) +
+  scale_color_manual(values = c("black")) + 
+  theme_minimal() +
+  labs(title = "Goal Distribution by Decade in FIFA World Cup Matches",
+       x = "Decade",
+       y = "Goals Scored per Match") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12))
+
+```
+
+The boxplot shows us as that the average number of goals per match in FIFA World Cup games has decreased over the decades. Teams in the 1930s and 1940s had higher median goal counts and more extreme outliers, while more recent decades have lower median values and fewer high-scoring matches. This could be due to a variety of reasons such as strategies to play the game, as well as more skilled players
+
+--- 
+
+## Discussion
+
+In this project, I analyzed FIFA World Cup trends. The World Cup shows rising attendance with major spikes in the 1980s, 1990s, and 2000s (Line Graph). Brazil, Italy, and Germany have consistently dominated the World Cup finals over the decades, highlighting their skilled players and superior strategies (pie chart), while historic matches like Brazil vs. Uruguay drew massive crowds (bar graph). In the treemap we can see that the 1958 World Cup saw Brazil as the top-scoring team, showcasing their superior gameplay in the tournament. Their high goal-scoring performance helped them secure the championship. From the boxplot we can see that over the decades, goals per match have declined, likely due to evolving strategies and stronger defenses. As technology, training, and strategies improve, soccer will become even more competitive in the future, with new countries challenging the top teams. Overall, the World Cup keeps growing and will shape the future of soccer worldwide.
+
+--- 
+
+## References
+
+1. [https://www.kaggle.com/datasets/abecklas/fifa-world-cup](https://www.kaggle.com/datasets/abecklas/fifa-world-cup)
+
+2. [https://scales.r-lib.org/index.html](https://scales.r-lib.org/index.html)
+
+3. [https://dplyr.tidyverse.org/](https://dplyr.tidyverse.org/)
+
+4. [https://tidyr.tidyverse.org/](https://tidyr.tidyverse.org/)
+
+5. [https://r-graph-gallery.com/treemap.html](https://r-graph-gallery.com/treemap.html)
+
+6. [https://ggplot2.tidyverse.org/reference/](https://ggplot2.tidyverse.org/reference/)
+
